@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Sample KML File</name>
+    <description>A sample KML file for testing the KML Map Viewer</description>
+    <Style id="yellowPoly">
+      <LineStyle>
+        <width>4</width>
+        <color>ff00ffff</color>
+      </LineStyle>
+      <PolyStyle>
+        <color>7f00ff00</color>
+      </PolyStyle>
+    </Style>
+    <Placemark>
+      <name>Tokyo Tower</name>
+      <description>Famous landmark in Tokyo, Japan</description>
+      <Point>
+        <coordinates>139.7455,35.6586,0</coordinates>
+      </Point>
+    </Placemark>
+    <Placemark>
+      <name>Tokyo Skytree</name>
+      <description>Tallest structure in Japan</description>
+      <Point>
+        <coordinates>139.8107,35.7101,0</coordinates>
+      </Point>
+    </Placemark>
+    <Placemark>
+      <name>Shinjuku Gyoen</name>
+      <styleUrl>#yellowPoly</styleUrl>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>
+              139.7088,35.6883,0
+              139.7088,35.6850,0
+              139.7137,35.6850,0
+              139.7137,35.6883,0
+              139.7088,35.6883,0
+            </coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+    <Placemark>
+      <name>Path from Tokyo Station to Imperial Palace</name>
+      <LineString>
+        <coordinates>
+          139.7671,35.6812,0
+          139.7630,35.6811,0
+          139.7595,35.6808,0
+          139.7582,35.6790,0
+          139.7559,35.6789,0
+          139.7555,35.6771,0
+        </coordinates>
+      </LineString>
+    </Placemark>
+  </Document>
+</kml>
