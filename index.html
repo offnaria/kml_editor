@@ -15,8 +15,8 @@
             integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
             crossorigin=""></script>
     
-    <!-- Leaflet-KML plugin for parsing KML files -->
-    <script src="https://unpkg.com/leaflet-kml@1.0.1/L.KML.js"></script>
+    <!-- Use omnivore for better KML support -->
+    <script src="https://api.tiles.mapbox.com/mapbox.js/plugins/leaflet-omnivore/v0.3.1/leaflet-omnivore.min.js"></script>
     
     <style>
         body {
@@ -40,6 +40,12 @@
         .header h1 {
             margin: 0;
             font-size: 24px;
+        }
+        
+        #status-message {
+            margin: 5px 0 0 0;
+            font-size: 14px;
+            font-style: italic;
         }
         
         .content {
@@ -118,6 +124,7 @@
     <div class="container">
         <div class="header">
             <h1>KML Map Viewer</h1>
+            <p id="status-message"></p>
         </div>
         <div class="content">
             <div class="sidebar">
@@ -162,6 +169,8 @@
             
             reader.onload = function(e) {
                 try {
+                    console.log("File read successfully, content length:", reader.result.length);
+                    
                     // Clear previous KML layer if it exists
                     if (kmlLayer) {
                         map.removeLayer(kmlLayer);
@@ -169,24 +178,41 @@
                         kmlFeatures = [];
                     }
                     
-                    // Create new KML layer
-                    kmlLayer = new L.KML(reader.result);
-                    map.addLayer(kmlLayer);
+                    // Use omnivore to parse KML
+                    kmlLayer = omnivore.kml.parse(reader.result);
                     
-                    // Fit map bounds to the KML layer
-                    if (kmlLayer.getBounds) {
-                        map.fitBounds(kmlLayer.getBounds());
-                    }
+                    // Add layer to map with error handling
+                    kmlLayer
+                        .on('ready', function() {
+                            console.log("KML layer ready!");
+                            map.addLayer(kmlLayer);
+                            
+                            // Fit map bounds to the KML layer
+                            if (kmlLayer.getBounds && !kmlLayer.getBounds().isEmpty()) {
+                                map.fitBounds(kmlLayer.getBounds());
+                            }
+                            
+                            // Extract features from KML for sidebar
+                            extractKMLFeatures();
+                            
+                            // Show success message
+                            alert('KML file loaded successfully!');
+                        })
+                        .on('error', function(err) {
+                            console.error("Error loading KML:", err);
+                            alert('Error loading KML file: ' + err.message);
+                        })
+                        .addTo(map);
                     
-                    // Extract features from KML for sidebar
-                    extractKMLFeatures();
-                    
-                    // Show success message
-                    alert('KML file loaded successfully!');
                 } catch (error) {
                     console.error('Error parsing KML:', error);
-                    alert('Error loading KML file. Please check if the file is a valid KML.');
+                    alert('Error loading KML file: ' + error.message);
                 }
+            };
+            
+            reader.onerror = function(e) {
+                console.error("FileReader error:", e);
+                alert('Error reading file: ' + e.target.error.name);
             };
             
             reader.readAsText(file);
@@ -199,11 +225,30 @@
             
             if (!kmlLayer) return;
             
+            console.log("Extracting features from KML layer:", kmlLayer);
+            
+            // Count of features found
+            let featuresFound = 0;
+            
             // Access to layer._layers to get the features
             if (kmlLayer._layers) {
                 Object.values(kmlLayer._layers).forEach((layer, index) => {
+                    console.log("Layer found:", layer);
+                    
                     if (layer.feature || layer._popup) {
+                        featuresFound++;
                         let name = 'Feature ' + (index + 1);
+                        
+                        // Try to get name from feature properties
+                        if (layer.feature && layer.feature.properties) {
+                            if (layer.feature.properties.name) {
+                                name = layer.feature.properties.name;
+                            } else if (layer.feature.properties.title) {
+                                name = layer.feature.properties.title;
+                            } else if (layer.feature.properties.description) {
+                                name = layer.feature.properties.description.substring(0, 30) + '...';
+                            }
+                        }
                         
                         // Try to get name from popup content
                         if (layer._popup && layer._popup._content) {
@@ -236,18 +281,62 @@
                 });
             }
             
+            console.log(`Total features found: ${featuresFound}`);
+            
             if (featuresContainer.children.length === 0) {
                 featuresContainer.innerHTML = '<p>No features found in KML file.</p>';
             }
         }
         
+        // Function to show status messages
+        function showStatus(message, isError = false) {
+            const statusEl = document.getElementById('status-message');
+            statusEl.textContent = message;
+            statusEl.style.color = isError ? 'red' : 'green';
+            console.log(isError ? 'ERROR: ' : 'STATUS: ', message);
+        }
+        
+        // Add drag and drop support for KML files
+        const mapContainer = document.querySelector('.map-container');
+        
+        mapContainer.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            this.style.backgroundColor = 'rgba(0, 0, 0, 0.1)';
+        });
+        
+        mapContainer.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            this.style.backgroundColor = 'transparent';
+        });
+        
+        mapContainer.addEventListener('drop', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            this.style.backgroundColor = 'transparent';
+            
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            
+            if (files.length) {
+                const file = files[0];
+                if (file.name.toLowerCase().endsWith('.kml')) {
+                    parseKML(file);
+                } else {
+                    showStatus('Please drop a KML file', true);
+                }
+            }
+        });
+        
         // Event listeners
         document.getElementById('load-kml').addEventListener('click', () => {
             const fileInput = document.getElementById('kml-file');
             if (fileInput.files.length > 0) {
+                showStatus('Loading KML file...');
                 parseKML(fileInput.files[0]);
             } else {
-                alert('Please select a KML file first!');
+                showStatus('Please select a KML file first!', true);
             }
         });
         
@@ -257,7 +346,16 @@
                 kmlLayer = null;
                 kmlFeatures = [];
                 document.getElementById('kml-features').innerHTML = '';
-                alert('Map cleared!');
+                showStatus('Map cleared!');
+            }
+        });
+        
+        // Handle direct file input change
+        document.getElementById('kml-file').addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                // Auto-load the KML file
+                showStatus('Loading KML file...');
+                parseKML(e.target.files[0]);
             }
         });
     </script>
