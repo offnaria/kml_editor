@@ -213,6 +213,35 @@
         .control-button:hover {
             background-color: #e0e0e0;
         }
+        
+        .color-picker-container {
+            display: inline-block;
+            position: relative;
+            margin-right: 5px;
+        }
+        
+        .color-picker-button {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            border: 1px solid #ddd;
+            background-color: #3388ff;
+            cursor: pointer;
+            display: inline-block;
+            vertical-align: middle;
+        }
+        
+        .color-picker {
+            width: 30px;
+            height: 30px;
+            padding: 0;
+            border: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            opacity: 0;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
@@ -662,6 +691,40 @@
             const controlsDiv = document.createElement('div');
             controlsDiv.className = 'feature-controls';
             
+            // For features that can be styled (lines and polygons), add a color picker
+            if (featureInfo.type === 'line' || featureInfo.type === 'polygon') {
+                // Create color picker container
+                const colorPickerContainer = document.createElement('div');
+                colorPickerContainer.className = 'color-picker-container';
+                
+                // Create color button visual element
+                const colorButton = document.createElement('span');
+                colorButton.className = 'color-picker-button';
+                colorButton.title = 'Change color';
+                
+                // Set initial color if feature has custom color
+                if (featureInfo.layer.options && featureInfo.layer.options.color) {
+                    colorButton.style.backgroundColor = featureInfo.layer.options.color;
+                }
+                
+                // Create actual input color picker
+                const colorInput = document.createElement('input');
+                colorInput.type = 'color';
+                colorInput.className = 'color-picker';
+                colorInput.value = featureInfo.layer.options && featureInfo.layer.options.color ? 
+                    featureInfo.layer.options.color : '#3388ff';
+                colorInput.addEventListener('input', (e) => {
+                    e.stopPropagation();
+                    const newColor = e.target.value;
+                    colorButton.style.backgroundColor = newColor;
+                    changeFeatureColor(featureInfo, newColor);
+                });
+                
+                colorPickerContainer.appendChild(colorButton);
+                colorPickerContainer.appendChild(colorInput);
+                controlsDiv.appendChild(colorPickerContainer);
+            }
+            
             // Only add displacement controls for lines and polygons, not points
             if (featureInfo.type === 'line' || featureInfo.type === 'polygon') {
                 const displaceBtn = document.createElement('button');
@@ -1000,10 +1063,35 @@
             if (activeFeature && activeFeature.layer && activeFeature.layer.setStyle) {
                 // Reset to default style
                 activeFeature.layer.setStyle({
-                    color: '#3388ff',
+                    color: activeFeature.layer.options.color || '#3388ff',
                     weight: 3,
                     dashArray: null
                 });
+            }
+        }
+        
+        // Function to change feature color
+        function changeFeatureColor(featureInfo, color) {
+            if (!featureInfo || !featureInfo.layer) return;
+            
+            if (featureInfo.layer.setStyle) {
+                // For lines and polygons
+                featureInfo.layer.setStyle({
+                    color: color,
+                    fillColor: color
+                });
+                
+                // Store the color in the layer options for later reference
+                featureInfo.layer.options.color = color;
+                if (featureInfo.type === 'polygon') {
+                    featureInfo.layer.options.fillColor = color;
+                }
+                
+                showStatus(`Color of "${featureInfo.name}" changed to ${color}`);
+            } else if (featureInfo.type === 'point' && featureInfo.layer instanceof L.Marker) {
+                // For points (markers), we would need to replace the icon
+                // This is more complex and not implemented here
+                showStatus('Changing color for point features is not supported yet', true);
             }
         }
         
@@ -1195,27 +1283,115 @@
             let kml = '<?xml version="1.0" encoding="UTF-8"?>\n';
             kml += '<kml xmlns="http://www.opengis.net/kml/2.2">\n';
             kml += '  <Document>\n';
-            kml += `    <name>${kmlStructure.name || 'Exported KML'}</name>\n`;
+            kml += `    <n>${kmlStructure.name || 'Exported KML'}</n>\n`;
             kml += '    <description>Exported from KML Map Viewer</description>\n';
             
-            // Add a style for polygons
-            kml += '    <Style id="polygonStyle">\n';
-            kml += '      <LineStyle>\n';
-            kml += '        <width>3</width>\n';
-            kml += '        <color>ff0000ff</color>\n';
-            kml += '      </LineStyle>\n';
-            kml += '      <PolyStyle>\n';
-            kml += '        <color>7f0000ff</color>\n';
-            kml += '      </PolyStyle>\n';
-            kml += '    </Style>\n';
+            // Style map to avoid duplicates
+            const styleMap = new Map();
             
-            // Add a style for lines
-            kml += '    <Style id="lineStyle">\n';
-            kml += '      <LineStyle>\n';
-            kml += '        <width>3</width>\n';
-            kml += '        <color>ff0000ff</color>\n';
-            kml += '      </LineStyle>\n';
-            kml += '    </Style>\n';
+            // Add default styles
+            styleMap.set('defaultPolygonStyle', {
+                id: 'defaultPolygonStyle',
+                lineColor: 'ff0000ff',
+                fillColor: '7f0000ff',
+                lineWidth: 3
+            });
+            
+            styleMap.set('defaultLineStyle', {
+                id: 'defaultLineStyle',
+                lineColor: 'ff0000ff',
+                lineWidth: 3
+            });
+            
+            // Helper function to convert RGB hex to KML color (ABGR format)
+            function hexToKmlColor(hexColor, opacity = 'ff') {
+                // Remove # if present
+                hexColor = hexColor.replace('#', '');
+                
+                // Parse the hex values
+                const r = hexColor.substring(0, 2);
+                const g = hexColor.substring(2, 4);
+                const b = hexColor.substring(4, 6);
+                
+                // Return in ABGR format that KML expects
+                return `${opacity}${b}${g}${r}`;
+            }
+            
+            // Helper function to create a style ID from a color
+            function createStyleId(type, color) {
+                const kmlColor = hexToKmlColor(color);
+                return `${type}Style_${kmlColor}`;
+            }
+            
+            // Iterate to collect all unique styles first
+            if (kmlLayer && kmlLayer._layers) {
+                Object.values(kmlLayer._layers).forEach(layer => {
+                    if (layer.options && layer.options.color) {
+                        if (layer instanceof L.Polygon) {
+                            const styleId = createStyleId('polygon', layer.options.color);
+                            if (!styleMap.has(styleId)) {
+                                styleMap.set(styleId, {
+                                    id: styleId,
+                                    lineColor: hexToKmlColor(layer.options.color),
+                                    fillColor: hexToKmlColor(layer.options.color, '7f'), // 50% opacity
+                                    lineWidth: layer.options.weight || 3
+                                });
+                            }
+                        } else if (layer instanceof L.Polyline && !(layer instanceof L.Polygon)) {
+                            const styleId = createStyleId('line', layer.options.color);
+                            if (!styleMap.has(styleId)) {
+                                styleMap.set(styleId, {
+                                    id: styleId,
+                                    lineColor: hexToKmlColor(layer.options.color),
+                                    lineWidth: layer.options.weight || 3
+                                });
+                            }
+                        }
+                    }
+                });
+            }
+            
+            // Add all styles to KML
+            styleMap.forEach(style => {
+                if (style.id.startsWith('polygon')) {
+                    kml += `    <Style id="${style.id}">\n`;
+                    kml += '      <LineStyle>\n';
+                    kml += `        <width>${style.lineWidth}</width>\n`;
+                    kml += `        <color>${style.lineColor}</color>\n`;
+                    kml += '      </LineStyle>\n';
+                    kml += '      <PolyStyle>\n';
+                    kml += `        <color>${style.fillColor}</color>\n`;
+                    kml += '      </PolyStyle>\n';
+                    kml += '    </Style>\n';
+                } else if (style.id.startsWith('line')) {
+                    kml += `    <Style id="${style.id}">\n`;
+                    kml += '      <LineStyle>\n';
+                    kml += `        <width>${style.lineWidth}</width>\n`;
+                    kml += `        <color>${style.lineColor}</color>\n`;
+                    kml += '      </LineStyle>\n';
+                    kml += '    </Style>\n';
+                } else {
+                    // Default styles
+                    if (style.id === 'defaultPolygonStyle') {
+                        kml += '    <Style id="defaultPolygonStyle">\n';
+                        kml += '      <LineStyle>\n';
+                        kml += '        <width>3</width>\n';
+                        kml += '        <color>ff0000ff</color>\n';
+                        kml += '      </LineStyle>\n';
+                        kml += '      <PolyStyle>\n';
+                        kml += '        <color>7f0000ff</color>\n';
+                        kml += '      </PolyStyle>\n';
+                        kml += '    </Style>\n';
+                    } else if (style.id === 'defaultLineStyle') {
+                        kml += '    <Style id="defaultLineStyle">\n';
+                        kml += '      <LineStyle>\n';
+                        kml += '        <width>3</width>\n';
+                        kml += '        <color>ff0000ff</color>\n';
+                        kml += '      </LineStyle>\n';
+                        kml += '    </Style>\n';
+                    }
+                }
+            });
             
             // Iterate through all layers and extract features
             if (kmlLayer && kmlLayer._layers) {
@@ -1232,10 +1408,31 @@
                         
                         // Create Placemark
                         kml += '    <Placemark>\n';
-                        kml += `      <name>${escapeXml(name)}</name>\n`;
+                        kml += `      <n>${escapeXml(name)}</n>\n`;
                         
                         if (description) {
                             kml += `      <description>${escapeXml(description)}</description>\n`;
+                        }
+                        
+                        // Add style reference based on feature type and color
+                        let styleId = '';
+                        
+                        if (layer instanceof L.Polygon) {
+                            if (layer.options && layer.options.color) {
+                                styleId = createStyleId('polygon', layer.options.color);
+                            } else {
+                                styleId = 'defaultPolygonStyle';
+                            }
+                        } else if (layer instanceof L.Polyline && !(layer instanceof L.Polygon)) {
+                            if (layer.options && layer.options.color) {
+                                styleId = createStyleId('line', layer.options.color);
+                            } else {
+                                styleId = 'defaultLineStyle';
+                            }
+                        }
+                        
+                        if (styleId) {
+                            kml += `      <styleUrl>#${styleId}</styleUrl>\n`;
                         }
                         
                         // Add geometry based on feature type
@@ -1247,7 +1444,8 @@
                             kml += '      </Point>\n';
                         } else if (layer instanceof L.Polygon) {
                             // Polygon
-                            kml += '      <styleUrl>#polygonStyle</styleUrl>\n';
+                            const styleId = createStyleId('polygon', layer.options.color);
+                            kml += `      <styleUrl>#${styleId}</styleUrl>\n`;
                             kml += '      <Polygon>\n';
                             kml += '        <outerBoundaryIs>\n';
                             kml += '          <LinearRing>\n';
@@ -1316,7 +1514,8 @@
                             kml += '      </Polygon>\n';
                         } else if (layer instanceof L.Polyline) {
                             // LineString
-                            kml += '      <styleUrl>#lineStyle</styleUrl>\n';
+                            const styleId = createStyleId('line', layer.options.color);
+                            kml += `      <styleUrl>#${styleId}</styleUrl>\n`;
                             kml += '      <LineString>\n';
                             kml += '        <coordinates>\n';
                             
