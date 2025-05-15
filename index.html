@@ -15,6 +15,9 @@
             integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
             crossorigin=""></script>
     
+    <!-- Use the toGeoJSON library for better KML parsing -->
+    <script src="https://unpkg.com/@tmcw/togeojson@5.8.0/dist/togeojson.umd.js"></script>
+    
     <!-- Use omnivore for better KML support -->
     <script src="https://api.tiles.mapbox.com/mapbox.js/plugins/leaflet-omnivore/v0.3.1/leaflet-omnivore.min.js"></script>
     
@@ -113,10 +116,83 @@
             border: 1px solid #ddd;
             margin-bottom: 5px;
             cursor: pointer;
+            position: relative;
         }
         
         .kml-feature:hover {
             background-color: #f0f0f0;
+        }
+        
+        .kml-layer {
+            margin-bottom: 10px;
+            border-left: 2px solid #4CAF50;
+            padding-left: 10px;
+        }
+        
+        .kml-layer-header {
+            padding: 8px;
+            background-color: #e9e9e9;
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        
+        .kml-layer-header:hover {
+            background-color: #d9d9d9;
+        }
+        
+        .kml-layer-content {
+            padding-left: 15px;
+            display: none;
+        }
+        
+        .kml-layer-content.active {
+            display: block;
+        }
+        
+        .kml-toggle {
+            cursor: pointer;
+            width: 20px;
+            text-align: center;
+        }
+        
+        .kml-feature-icon {
+            width: 16px;
+            height: 16px;
+            display: inline-block;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        
+        .kml-icon-point {
+            background-color: #FF5722;
+            border-radius: 50%;
+        }
+        
+        .kml-icon-line {
+            background-color: #2196F3;
+            height: 4px;
+            margin-top: 6px;
+        }
+        
+        .kml-icon-polygon {
+            background-color: #4CAF50;
+            border-radius: 2px;
+        }
+        
+        .kml-feature-active {
+            background-color: #e3f2fd !important;
+            border-left: 4px solid #2196F3;
+        }
+        
+        .feature-visibility {
+            position: absolute;
+            right: 10px;
+            top: 10px;
+            cursor: pointer;
         }
     </style>
 </head>
@@ -137,6 +213,10 @@
                     </div>
                 </div>
                 <div class="kml-info">
+                    <h3>KML Layers</h3>
+                    <div id="kml-layers" class="kml-layers">
+                        <!-- Layers will be listed here -->
+                    </div>
                     <h3>KML Features</h3>
                     <div id="kml-features" class="kml-features">
                         <!-- Features will be listed here -->
@@ -162,6 +242,64 @@
         // Variables to store KML data
         let kmlLayer = null;
         let kmlFeatures = [];
+        let kmlStructure = {
+            name: 'Root',
+            type: 'document',
+            children: []
+        };
+        
+        // Debug log function that includes timestamps
+        function debugLog(message, obj) {
+            const timestamp = new Date().toLocaleTimeString();
+            console.log(`[${timestamp}] ${message}`);
+            if (obj !== undefined) {
+                console.log(obj);
+            }
+        }
+        
+        // Function to manually create a KML layer if omnivore fails
+        function createManualKmlLayer(kmlString) {
+            // Parse KML
+            const parser = new DOMParser();
+            const kmlDoc = parser.parseFromString(kmlString, 'text/xml');
+            
+            // Convert to GeoJSON using toGeoJSON
+            const geoJson = toGeoJSON.kml(kmlDoc);
+            debugLog("Converted GeoJSON:", geoJson);
+            
+            // Create a GeoJSON layer
+            return L.geoJSON(geoJson, {
+                style: function(feature) {
+                    return {
+                        color: '#3388ff',
+                        weight: 3,
+                        opacity: 1,
+                        fillColor: '#3388ff',
+                        fillOpacity: 0.2
+                    };
+                },
+                pointToLayer: function(feature, latlng) {
+                    return L.marker(latlng);
+                },
+                onEachFeature: function(feature, layer) {
+                    if (feature.properties) {
+                        let popupContent = '';
+                        
+                        if (feature.properties.name) {
+                            popupContent += '<b>' + feature.properties.name + '</b><br>';
+                        }
+                        
+                        if (feature.properties.description) {
+                            popupContent += feature.properties.description;
+                        }
+                        
+                        if (popupContent) {
+                            layer.bindPopup(popupContent);
+                        }
+                    }
+                }
+            });
+        }
         
         // Function to parse KML file
         function parseKML(file) {
@@ -178,31 +316,135 @@
                         kmlFeatures = [];
                     }
                     
-                    // Use omnivore to parse KML
-                    kmlLayer = omnivore.kml.parse(reader.result);
+                    // Create a DOM parser to parse the KML
+                    const parser = new DOMParser();
+                    const kmlDoc = parser.parseFromString(reader.result, 'text/xml');
                     
-                    // Add layer to map with error handling
-                    kmlLayer
-                        .on('ready', function() {
-                            console.log("KML layer ready!");
-                            map.addLayer(kmlLayer);
+                    // Check if the document is valid KML
+                    if (kmlDoc.documentElement.nodeName === "parsererror") {
+                        throw new Error("Invalid KML format");
+                    }
+                    
+                    // Log the parsed KML for debugging
+                    console.log("Parsed KML document:", kmlDoc);
+                    
+                    try {
+                        // Create a Blob from the KML string for omnivore
+                        const kmlBlob = new Blob([reader.result], {type: 'text/xml'});
+                        const kmlUrl = URL.createObjectURL(kmlBlob);
+                        
+                        // Use omnivore with the URL
+                        kmlLayer = omnivore.kml(kmlUrl).on('ready', function() {
+                            console.log("KML layer ready!", kmlLayer);
+                            processKmlLayer();
+                        }).on('error', function(err) {
+                            console.error("Error loading KML with omnivore:", err);
+                            throw err;
+                        });
+                    } catch (e) {
+                        // If omnivore fails, try our manual method
+                        console.warn("Omnivore failed, trying manual KML parsing:", e);
+                        kmlLayer = createManualKmlLayer(reader.result);
+                        console.log("KML layer created manually:", kmlLayer);
+                        processKmlLayer();
+                    }
+                    
+                    // Common processing for the KML layer
+                    function processKmlLayer() {
+                        // Check if the layer has any features
+                        if (kmlLayer.getLayers && kmlLayer.getLayers().length === 0) {
+                            console.warn("KML layer has no features");
+                            showStatus('Warning: KML file loaded but contains no features', true);
+                        }
+                        
+                        // First remove any previous layer if already on map
+                        if (map.hasLayer(kmlLayer)) {
+                            map.removeLayer(kmlLayer);
+                        }
+                        
+                        // Add layer to map
+                        kmlLayer.addTo(map);
+                        
+                        // Fit map bounds to the KML layer
+                        try {
+                            debugLog("Checking if we can fit to bounds");
                             
-                            // Fit map bounds to the KML layer
-                            if (kmlLayer.getBounds && !kmlLayer.getBounds().isEmpty()) {
-                                map.fitBounds(kmlLayer.getBounds());
+                            // Attempt to get bounds from various methods
+                            let bounds = null;
+                            
+                            // Method 1: Direct getBounds
+                            if (kmlLayer.getBounds && typeof kmlLayer.getBounds === 'function') {
+                                try {
+                                    bounds = kmlLayer.getBounds();
+                                    debugLog("Got bounds directly from kmlLayer.getBounds()", bounds);
+                                } catch (e) {
+                                    console.warn("Error using kmlLayer.getBounds():", e);
+                                }
                             }
                             
-                            // Extract features from KML for sidebar
-                            extractKMLFeatures();
+                            // Method 2: Extract from layers
+                            if (!bounds && kmlLayer.getLayers && typeof kmlLayer.getLayers === 'function') {
+                                try {
+                                    const layers = kmlLayer.getLayers();
+                                    debugLog(`Found ${layers.length} layers to extract bounds from`);
+                                    
+                                    if (layers.length > 0) {
+                                        // Create a bounds object from the first layer that has bounds or latLng
+                                        for (const layer of layers) {
+                                            if (layer.getBounds && typeof layer.getBounds === 'function') {
+                                                bounds = layer.getBounds();
+                                                break;
+                                            } else if (layer.getLatLng && typeof layer.getLatLng === 'function') {
+                                                const latlng = layer.getLatLng();
+                                                bounds = L.latLngBounds([latlng, latlng]);
+                                                break;
+                                            }
+                                        }
+                                        debugLog("Extracted bounds from a layer", bounds);
+                                    }
+                                } catch (e) {
+                                    console.warn("Error getting bounds from layers:", e);
+                                }
+                            }
                             
-                            // Show success message
-                            alert('KML file loaded successfully!');
-                        })
-                        .on('error', function(err) {
-                            console.error("Error loading KML:", err);
-                            alert('Error loading KML file: ' + err.message);
-                        })
-                        .addTo(map);
+                            // If we have bounds, try to fit to them
+                            if (bounds) {
+                                try {
+                                    // Check if bounds valid using method available
+                                    let isValid = true; 
+                                    if (bounds.isValid && typeof bounds.isValid === 'function') {
+                                        isValid = bounds.isValid();
+                                    }
+                                    
+                                    if (isValid) {
+                                        debugLog("Fitting to bounds:", bounds);
+                                        map.fitBounds(bounds);
+                                    } else {
+                                        console.warn("Invalid bounds object");
+                                    }
+                                } catch (e) {
+                                    console.warn("Error fitting to bounds:", e);
+                                }
+                            } else {
+                                console.warn("Could not determine bounds for KML layer");
+                            }
+                        } catch (err) {
+                            console.warn("Error handling bounds:", err);
+                        }
+                        
+            try {
+                // Extract features from KML for sidebar
+                extractKMLFeatures();
+                
+                // Show success message
+                showStatus('KML file loaded successfully!');
+            } catch (err) {
+                console.error("Error processing KML:", err);
+                showStatus('Error processing KML features: ' + err.message, true);
+            }
+                    }
+                    
+                    // We don't need this anymore as we've moved the event handlers directly to omnivore.kml()
                     
                 } catch (error) {
                     console.error('Error parsing KML:', error);
@@ -221,14 +463,46 @@
         // Function to extract features from KML layer
         function extractKMLFeatures() {
             const featuresContainer = document.getElementById('kml-features');
+            const layersContainer = document.getElementById('kml-layers');
             featuresContainer.innerHTML = '';
+            layersContainer.innerHTML = '';
             
             if (!kmlLayer) return;
             
             console.log("Extracting features from KML layer:", kmlLayer);
             
+            // Reset KML structure
+            kmlStructure = {
+                name: 'KML Document',
+                type: 'document',
+                children: []
+            };
+            
             // Count of features found
             let featuresFound = 0;
+            let featuresByType = {
+                point: [],
+                line: [],
+                polygon: []
+            };
+            
+            // Create layer groups for organization
+            const pointLayer = { name: 'Points', type: 'folder', features: [] };
+            const lineLayer = { name: 'Lines', type: 'folder', features: [] };
+            const polygonLayer = { name: 'Polygons', type: 'folder', features: [] };
+            
+            // Try to extract KML document name
+            if (kmlLayer && kmlLayer._layers) {
+                // Get the first layer, which might be the document
+                const firstLayerKey = Object.keys(kmlLayer._layers)[0];
+                const firstLayer = kmlLayer._layers[firstLayerKey];
+                
+                if (firstLayer && firstLayer.feature && firstLayer.feature.properties) {
+                    if (firstLayer.feature.properties.name) {
+                        kmlStructure.name = firstLayer.feature.properties.name;
+                    }
+                }
+            }
             
             // Access to layer._layers to get the features
             if (kmlLayer._layers) {
@@ -238,6 +512,17 @@
                     if (layer.feature || layer._popup) {
                         featuresFound++;
                         let name = 'Feature ' + (index + 1);
+                        let description = '';
+                        let featureType = 'unknown';
+                        
+                        // Determine feature type
+                        if (layer instanceof L.Marker) {
+                            featureType = 'point';
+                        } else if (layer instanceof L.Polyline && !(layer instanceof L.Polygon)) {
+                            featureType = 'line';
+                        } else if (layer instanceof L.Polygon) {
+                            featureType = 'polygon';
+                        }
                         
                         // Try to get name from feature properties
                         if (layer.feature && layer.feature.properties) {
@@ -245,8 +530,10 @@
                                 name = layer.feature.properties.name;
                             } else if (layer.feature.properties.title) {
                                 name = layer.feature.properties.title;
-                            } else if (layer.feature.properties.description) {
-                                name = layer.feature.properties.description.substring(0, 30) + '...';
+                            }
+                            
+                            if (layer.feature.properties.description) {
+                                description = layer.feature.properties.description;
                             }
                         }
                         
@@ -258,34 +545,159 @@
                             }
                         }
                         
-                        // Create feature item in sidebar
-                        const featureDiv = document.createElement('div');
-                        featureDiv.className = 'kml-feature';
-                        featureDiv.textContent = name;
-                        featureDiv.addEventListener('click', () => {
-                            // Zoom to feature
-                            if (layer.getBounds) {
-                                map.fitBounds(layer.getBounds());
-                            } else if (layer.getLatLng) {
-                                map.setView(layer.getLatLng(), 15);
-                            }
-                            
-                            // Open popup if available
-                            if (layer.openPopup) {
-                                layer.openPopup();
-                            }
-                        });
+                        // Store feature reference
+                        const featureInfo = {
+                            name: name,
+                            description: description,
+                            type: featureType,
+                            layer: layer
+                        };
                         
-                        featuresContainer.appendChild(featureDiv);
+                        // Add to appropriate layer
+                        if (featureType === 'point') {
+                            pointLayer.features.push(featureInfo);
+                        } else if (featureType === 'line') {
+                            lineLayer.features.push(featureInfo);
+                        } else if (featureType === 'polygon') {
+                            polygonLayer.features.push(featureInfo);
+                        }
+                        
+                        // Create feature item in sidebar
+                        createFeatureItem(featureInfo, featuresContainer);
                     }
                 });
             }
             
+            // Add non-empty layers to the structure
+            if (pointLayer.features.length > 0) {
+                kmlStructure.children.push(pointLayer);
+            }
+            if (lineLayer.features.length > 0) {
+                kmlStructure.children.push(lineLayer);
+            }
+            if (polygonLayer.features.length > 0) {
+                kmlStructure.children.push(polygonLayer);
+            }
+            
+            // Create the layer tree in the sidebar
+            createLayerTree(kmlStructure, layersContainer);
+            
             console.log(`Total features found: ${featuresFound}`);
+            console.log('KML structure:', kmlStructure);
             
             if (featuresContainer.children.length === 0) {
                 featuresContainer.innerHTML = '<p>No features found in KML file.</p>';
             }
+            
+            if (layersContainer.children.length === 0) {
+                layersContainer.innerHTML = '<p>No layers found in KML file.</p>';
+            }
+        }
+        
+        // Function to create a feature item in the sidebar
+        function createFeatureItem(featureInfo, container) {
+            const featureDiv = document.createElement('div');
+            featureDiv.className = 'kml-feature';
+            
+            // Add icon based on feature type
+            const iconSpan = document.createElement('span');
+            iconSpan.className = `kml-feature-icon kml-icon-${featureInfo.type}`;
+            featureDiv.appendChild(iconSpan);
+            
+            // Add feature name
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = featureInfo.name;
+            featureDiv.appendChild(nameSpan);
+            
+            // Add visibility toggle
+            const visibilityToggle = document.createElement('span');
+            visibilityToggle.className = 'feature-visibility';
+            visibilityToggle.innerHTML = '👁️';
+            visibilityToggle.title = 'Toggle visibility';
+            visibilityToggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                
+                // Toggle visibility
+                if (featureInfo.layer._map) {
+                    map.removeLayer(featureInfo.layer);
+                    visibilityToggle.innerHTML = '👁️‍🗨️';
+                } else {
+                    map.addLayer(featureInfo.layer);
+                    visibilityToggle.innerHTML = '👁️';
+                }
+            });
+            featureDiv.appendChild(visibilityToggle);
+            
+            // Add click handler for zooming to feature
+            featureDiv.addEventListener('click', () => {
+                // Remove active class from all features
+                document.querySelectorAll('.kml-feature').forEach(el => {
+                    el.classList.remove('kml-feature-active');
+                });
+                
+                // Add active class to this feature
+                featureDiv.classList.add('kml-feature-active');
+                
+                // Zoom to feature
+                if (featureInfo.layer.getBounds) {
+                    map.fitBounds(featureInfo.layer.getBounds());
+                } else if (featureInfo.layer.getLatLng) {
+                    map.setView(featureInfo.layer.getLatLng(), 15);
+                }
+                
+                // Open popup if available
+                if (featureInfo.layer.openPopup) {
+                    featureInfo.layer.openPopup();
+                }
+            });
+            
+            container.appendChild(featureDiv);
+            return featureDiv;
+        }
+        
+        // Function to create a layer tree in the sidebar
+        function createLayerTree(layerInfo, container) {
+            const layerDiv = document.createElement('div');
+            layerDiv.className = 'kml-layer';
+            
+            // Create layer header
+            const headerDiv = document.createElement('div');
+            headerDiv.className = 'kml-layer-header';
+            
+            const toggleSpan = document.createElement('span');
+            toggleSpan.className = 'kml-toggle';
+            toggleSpan.textContent = '+';
+            headerDiv.appendChild(toggleSpan);
+            
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = `${layerInfo.name} (${layerInfo.children ? layerInfo.children.length : layerInfo.features ? layerInfo.features.length : 0})`;
+            headerDiv.appendChild(nameSpan);
+            
+            layerDiv.appendChild(headerDiv);
+            
+            // Create content container
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'kml-layer-content';
+            
+            // Toggle functionality
+            headerDiv.addEventListener('click', () => {
+                contentDiv.classList.toggle('active');
+                toggleSpan.textContent = contentDiv.classList.contains('active') ? '-' : '+';
+            });
+            
+            // Add children or features
+            if (layerInfo.children && layerInfo.children.length > 0) {
+                layerInfo.children.forEach(child => {
+                    createLayerTree(child, contentDiv);
+                });
+            } else if (layerInfo.features && layerInfo.features.length > 0) {
+                layerInfo.features.forEach(feature => {
+                    createFeatureItem(feature, contentDiv);
+                });
+            }
+            
+            layerDiv.appendChild(contentDiv);
+            container.appendChild(layerDiv);
         }
         
         // Function to show status messages
@@ -342,10 +754,18 @@
         
         document.getElementById('clear-map').addEventListener('click', () => {
             if (kmlLayer) {
-                map.removeLayer(kmlLayer);
+                if (map.hasLayer(kmlLayer)) {
+                    map.removeLayer(kmlLayer);
+                }
                 kmlLayer = null;
                 kmlFeatures = [];
+                kmlStructure = {
+                    name: 'Root',
+                    type: 'document',
+                    children: []
+                };
                 document.getElementById('kml-features').innerHTML = '';
+                document.getElementById('kml-layers').innerHTML = '';
                 showStatus('Map cleared!');
             }
         });
