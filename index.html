@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KML Map Viewer</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+          crossorigin=""/>
+    
+    <!-- Leaflet JavaScript -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+            crossorigin=""></script>
+    
+    <!-- Leaflet-KML plugin for parsing KML files -->
+    <script src="https://unpkg.com/leaflet-kml@1.0.1/L.KML.js"></script>
+    
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+        }
+        
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        
+        .header {
+            padding: 15px;
+            background-color: #f4f4f4;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 24px;
+        }
+        
+        .content {
+            display: flex;
+            flex: 1;
+        }
+        
+        .sidebar {
+            width: 300px;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-right: 1px solid #ddd;
+            overflow-y: auto;
+        }
+        
+        .map-container {
+            flex: 1;
+            position: relative;
+        }
+        
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+        
+        .file-input {
+            margin-bottom: 20px;
+        }
+        
+        .file-input label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        
+        .file-input input {
+            width: 100%;
+        }
+        
+        .buttons {
+            margin-top: 10px;
+        }
+        
+        button {
+            padding: 8px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            margin-right: 5px;
+            border-radius: 4px;
+        }
+        
+        button:hover {
+            background-color: #45a049;
+        }
+        
+        .kml-features {
+            margin-top: 20px;
+        }
+        
+        .kml-feature {
+            padding: 10px;
+            background-color: #fff;
+            border: 1px solid #ddd;
+            margin-bottom: 5px;
+            cursor: pointer;
+        }
+        
+        .kml-feature:hover {
+            background-color: #f0f0f0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>KML Map Viewer</h1>
+        </div>
+        <div class="content">
+            <div class="sidebar">
+                <div class="file-input">
+                    <label for="kml-file">Upload KML File:</label>
+                    <input type="file" id="kml-file" accept=".kml">
+                    <div class="buttons">
+                        <button id="load-kml">Load KML</button>
+                        <button id="clear-map">Clear Map</button>
+                    </div>
+                </div>
+                <div class="kml-info">
+                    <h3>KML Features</h3>
+                    <div id="kml-features" class="kml-features">
+                        <!-- Features will be listed here -->
+                    </div>
+                </div>
+            </div>
+            <div class="map-container">
+                <div id="map"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize the map
+        const map = L.map('map').setView([35.6895, 139.6917], 13); // Tokyo as default center
+        
+        // Add OpenStreetMap tile layer
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+        
+        // Variables to store KML data
+        let kmlLayer = null;
+        let kmlFeatures = [];
+        
+        // Function to parse KML file
+        function parseKML(file) {
+            const reader = new FileReader();
+            
+            reader.onload = function(e) {
+                try {
+                    // Clear previous KML layer if it exists
+                    if (kmlLayer) {
+                        map.removeLayer(kmlLayer);
+                        kmlLayer = null;
+                        kmlFeatures = [];
+                    }
+                    
+                    // Create new KML layer
+                    kmlLayer = new L.KML(reader.result);
+                    map.addLayer(kmlLayer);
+                    
+                    // Fit map bounds to the KML layer
+                    if (kmlLayer.getBounds) {
+                        map.fitBounds(kmlLayer.getBounds());
+                    }
+                    
+                    // Extract features from KML for sidebar
+                    extractKMLFeatures();
+                    
+                    // Show success message
+                    alert('KML file loaded successfully!');
+                } catch (error) {
+                    console.error('Error parsing KML:', error);
+                    alert('Error loading KML file. Please check if the file is a valid KML.');
+                }
+            };
+            
+            reader.readAsText(file);
+        }
+        
+        // Function to extract features from KML layer
+        function extractKMLFeatures() {
+            const featuresContainer = document.getElementById('kml-features');
+            featuresContainer.innerHTML = '';
+            
+            if (!kmlLayer) return;
+            
+            // Access to layer._layers to get the features
+            if (kmlLayer._layers) {
+                Object.values(kmlLayer._layers).forEach((layer, index) => {
+                    if (layer.feature || layer._popup) {
+                        let name = 'Feature ' + (index + 1);
+                        
+                        // Try to get name from popup content
+                        if (layer._popup && layer._popup._content) {
+                            const match = layer._popup._content.match(/<b>(.*?)<\/b>/);
+                            if (match && match[1]) {
+                                name = match[1];
+                            }
+                        }
+                        
+                        // Create feature item in sidebar
+                        const featureDiv = document.createElement('div');
+                        featureDiv.className = 'kml-feature';
+                        featureDiv.textContent = name;
+                        featureDiv.addEventListener('click', () => {
+                            // Zoom to feature
+                            if (layer.getBounds) {
+                                map.fitBounds(layer.getBounds());
+                            } else if (layer.getLatLng) {
+                                map.setView(layer.getLatLng(), 15);
+                            }
+                            
+                            // Open popup if available
+                            if (layer.openPopup) {
+                                layer.openPopup();
+                            }
+                        });
+                        
+                        featuresContainer.appendChild(featureDiv);
+                    }
+                });
+            }
+            
+            if (featuresContainer.children.length === 0) {
+                featuresContainer.innerHTML = '<p>No features found in KML file.</p>';
+            }
+        }
+        
+        // Event listeners
+        document.getElementById('load-kml').addEventListener('click', () => {
+            const fileInput = document.getElementById('kml-file');
+            if (fileInput.files.length > 0) {
+                parseKML(fileInput.files[0]);
+            } else {
+                alert('Please select a KML file first!');
+            }
+        });
+        
+        document.getElementById('clear-map').addEventListener('click', () => {
+            if (kmlLayer) {
+                map.removeLayer(kmlLayer);
+                kmlLayer = null;
+                kmlFeatures = [];
+                document.getElementById('kml-features').innerHTML = '';
+                alert('Map cleared!');
+            }
+        });
+    </script>
+</body>
+</html>
