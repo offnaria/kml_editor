@@ -202,16 +202,56 @@
         }
         
         .control-button {
-            background-color: #f0f0f0;
-            border: 1px solid #ddd;
+            background-color: #2196F3; /* Blue color for better visibility */
+            border: 1px solid #1976D2;
             border-radius: 3px;
-            padding: 3px 6px;
+            padding: 4px 8px; /* Slightly larger padding */
             font-size: 12px;
             cursor: pointer;
+            color: white; /* White text for contrast */
+            font-weight: 500; /* Semi-bold text */
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1); /* Subtle shadow for depth */
         }
         
         .control-button:hover {
-            background-color: #e0e0e0;
+            background-color: #1976D2; /* Darker blue on hover */
+        }
+        
+        /* Specific button colors */
+        .control-button.displace-btn {
+            background-color: #FF9800; /* Orange for displace */
+            border-color: #F57C00;
+        }
+        
+        .control-button.displace-btn:hover {
+            background-color: #F57C00;
+        }
+        
+        .control-button.center-btn {
+            background-color: #2196F3; /* Blue for center */
+            border-color: #1976D2;
+        }
+        
+        .control-button.center-btn:hover {
+            background-color: #1976D2;
+        }
+        
+        .control-button.apply-btn {
+            background-color: #4CAF50; /* Green for apply */
+            border-color: #43A047;
+        }
+        
+        .control-button.apply-btn:hover {
+            background-color: #43A047;
+        }
+        
+        .control-button.cancel-btn {
+            background-color: #F44336; /* Red for cancel */
+            border-color: #E53935;
+        }
+        
+        .control-button.cancel-btn:hover {
+            background-color: #E53935;
         }
         
         .color-picker-container {
@@ -728,7 +768,7 @@
             // Only add displacement controls for lines and polygons, not points
             if (featureInfo.type === 'line' || featureInfo.type === 'polygon') {
                 const displaceBtn = document.createElement('button');
-                displaceBtn.className = 'control-button';
+                displaceBtn.className = 'control-button displace-btn';
                 displaceBtn.textContent = 'Displace';
                 displaceBtn.title = 'Displace this feature';
                 displaceBtn.addEventListener('click', (e) => {
@@ -740,7 +780,7 @@
             
             // For all feature types, add a center button to focus map
             const centerBtn = document.createElement('button');
-            centerBtn.className = 'control-button';
+            centerBtn.className = 'control-button center-btn';
             centerBtn.textContent = 'Center';
             centerBtn.title = 'Center map on this feature';
             centerBtn.addEventListener('click', (e) => {
@@ -960,7 +1000,7 @@
                 
                 const applyButton = document.createElement('button');
                 applyButton.textContent = 'Apply';
-                applyButton.className = 'control-button';
+                applyButton.className = 'control-button apply-btn';
                 applyButton.style.flex = '1';
                 applyButton.addEventListener('click', function() {
                     applyDisplacement(true); // true = finalize
@@ -970,7 +1010,7 @@
                 
                 const cancelButton = document.createElement('button');
                 cancelButton.textContent = 'Cancel';
-                cancelButton.className = 'control-button';
+                cancelButton.className = 'control-button cancel-btn';
                 cancelButton.style.flex = '1';
                 cancelButton.addEventListener('click', function() {
                     revertDisplacement();
