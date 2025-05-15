@@ -194,6 +194,25 @@
             top: 10px;
             cursor: pointer;
         }
+        
+        .feature-controls {
+            display: flex;
+            margin-top: 5px;
+            gap: 5px;
+        }
+        
+        .control-button {
+            background-color: #f0f0f0;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            padding: 3px 6px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        
+        .control-button:hover {
+            background-color: #e0e0e0;
+        }
     </style>
 </head>
 <body>
@@ -210,6 +229,7 @@
                     <div class="buttons">
                         <button id="load-kml">Load KML</button>
                         <button id="clear-map">Clear Map</button>
+                        <button id="export-kml">Export KML</button>
                     </div>
                 </div>
                 <div class="kml-info">
@@ -247,6 +267,13 @@
             type: 'document',
             children: []
         };
+        let currentFileName = ''; // Store the current file name
+        
+        // Active feature being edited
+        let activeFeature = null;
+        let isDisplacementActive = false;
+        let originalLatLngs = null;
+        let displacementValues = { lat: 0, lng: 0 };
         
         // Debug log function that includes timestamps
         function debugLog(message, obj) {
@@ -304,6 +331,9 @@
         // Function to parse KML file
         function parseKML(file) {
             const reader = new FileReader();
+            
+            // Store the file name globally so it can be used in other functions
+            currentFileName = file.name || '';
             
             reader.onload = function(e) {
                 try {
@@ -473,7 +503,7 @@
             
             // Reset KML structure
             kmlStructure = {
-                name: 'KML Document',
+                name: currentFileName.replace('.kml', '') || 'KML Document',
                 type: 'document',
                 children: []
             };
@@ -628,6 +658,36 @@
             });
             featureDiv.appendChild(visibilityToggle);
             
+            // Add feature controls (displacement buttons)
+            const controlsDiv = document.createElement('div');
+            controlsDiv.className = 'feature-controls';
+            
+            // Only add displacement controls for lines and polygons, not points
+            if (featureInfo.type === 'line' || featureInfo.type === 'polygon') {
+                const displaceBtn = document.createElement('button');
+                displaceBtn.className = 'control-button';
+                displaceBtn.textContent = 'Displace';
+                displaceBtn.title = 'Displace this feature';
+                displaceBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    activateDisplacement(featureInfo);
+                });
+                controlsDiv.appendChild(displaceBtn);
+            }
+            
+            // For all feature types, add a center button to focus map
+            const centerBtn = document.createElement('button');
+            centerBtn.className = 'control-button';
+            centerBtn.textContent = 'Center';
+            centerBtn.title = 'Center map on this feature';
+            centerBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                centerOnFeature(featureInfo);
+            });
+            controlsDiv.appendChild(centerBtn);
+            
+            featureDiv.appendChild(controlsDiv);
+            
             // Add click handler for zooming to feature
             featureDiv.addEventListener('click', () => {
                 // Remove active class from all features
@@ -638,12 +698,11 @@
                 // Add active class to this feature
                 featureDiv.classList.add('kml-feature-active');
                 
+                // Set as active feature
+                activeFeature = featureInfo;
+                
                 // Zoom to feature
-                if (featureInfo.layer.getBounds) {
-                    map.fitBounds(featureInfo.layer.getBounds());
-                } else if (featureInfo.layer.getLatLng) {
-                    map.setView(featureInfo.layer.getLatLng(), 15);
-                }
+                centerOnFeature(featureInfo);
                 
                 // Open popup if available
                 if (featureInfo.layer.openPopup) {
@@ -653,6 +712,15 @@
             
             container.appendChild(featureDiv);
             return featureDiv;
+        }
+        
+        // Function to center on a feature
+        function centerOnFeature(featureInfo) {
+            if (featureInfo.layer.getBounds) {
+                map.fitBounds(featureInfo.layer.getBounds());
+            } else if (featureInfo.layer.getLatLng) {
+                map.setView(featureInfo.layer.getLatLng(), 15);
+            }
         }
         
         // Function to create a layer tree in the sidebar
@@ -708,6 +776,237 @@
             console.log(isError ? 'ERROR: ' : 'STATUS: ', message);
         }
         
+        // Function to activate displacement mode for a feature
+        function activateDisplacement(featureInfo) {
+            // Deactivate any previous displacement
+            if (isDisplacementActive) {
+                deactivateDisplacement();
+            }
+            
+            // Set active feature and mode
+            activeFeature = featureInfo;
+            isDisplacementActive = true;
+            
+            // Show displacement controls
+            showDisplacementControls();
+            
+            // Store original coordinates
+            storeOriginalCoordinates(featureInfo.layer);
+            
+            // Highlight the feature
+            featureInfo.layer.setStyle && featureInfo.layer.setStyle({
+                color: '#ff4081',
+                weight: 4,
+                dashArray: '5, 10'
+            });
+            
+            // Show message
+            showStatus('Displacement mode active. Use the controls to move the feature.', false);
+        }
+        
+        // Function to store original coordinates of a feature
+        function storeOriginalCoordinates(layer) {
+            originalLatLngs = [];
+            
+            if (layer instanceof L.Marker) {
+                // For markers, store the single point
+                originalLatLngs = [layer.getLatLng()];
+            } else if (layer instanceof L.Polyline) {
+                // For lines or polygons, store all points
+                const latlngs = layer.getLatLngs();
+                
+                // Handle different structures (simple line vs polygon with holes)
+                if (Array.isArray(latlngs) && latlngs.length > 0) {
+                    // Deep clone the coordinates to avoid reference issues
+                    if (latlngs[0] instanceof L.LatLng) {
+                        // Simple line or polygon
+                        originalLatLngs = latlngs.map(ll => L.latLng(ll.lat, ll.lng));
+                    } else if (Array.isArray(latlngs[0])) {
+                        // Polygon with outer ring and possibly holes
+                        originalLatLngs = latlngs.map(ring => 
+                            ring.map(ll => L.latLng(ll.lat, ll.lng))
+                        );
+                    }
+                }
+            }
+            
+            console.log("Original coordinates stored:", originalLatLngs);
+        }
+        
+        // Function to show displacement controls
+        function showDisplacementControls() {
+            // Check if controls already exist
+            let controlPanel = document.getElementById('displacement-controls');
+            if (!controlPanel) {
+                // Create control panel
+                controlPanel = document.createElement('div');
+                controlPanel.id = 'displacement-controls';
+                controlPanel.style.position = 'absolute';
+                controlPanel.style.top = '10px';
+                controlPanel.style.right = '10px';
+                controlPanel.style.zIndex = '1000';
+                controlPanel.style.backgroundColor = 'white';
+                controlPanel.style.padding = '10px';
+                controlPanel.style.border = '1px solid #ccc';
+                controlPanel.style.borderRadius = '4px';
+                controlPanel.style.boxShadow = '0 0 10px rgba(0,0,0,0.1)';
+                
+                // Create heading
+                const heading = document.createElement('h3');
+                heading.textContent = 'Displacement Controls';
+                heading.style.margin = '0 0 10px 0';
+                controlPanel.appendChild(heading);
+                
+                // Create displacement inputs
+                const latLabel = document.createElement('label');
+                latLabel.textContent = 'Latitude shift (degrees): ';
+                controlPanel.appendChild(latLabel);
+                
+                const latInput = document.createElement('input');
+                latInput.type = 'number';
+                latInput.step = '0.0001';
+                latInput.value = displacementValues.lat;
+                latInput.style.width = '100%';
+                latInput.style.marginBottom = '10px';
+                latInput.addEventListener('input', function() {
+                    displacementValues.lat = parseFloat(this.value) || 0;
+                    applyDisplacement();
+                });
+                controlPanel.appendChild(latInput);
+                
+                const lngLabel = document.createElement('label');
+                lngLabel.textContent = 'Longitude shift (degrees): ';
+                controlPanel.appendChild(lngLabel);
+                
+                const lngInput = document.createElement('input');
+                lngInput.type = 'number';
+                lngInput.step = '0.0001';
+                lngInput.value = displacementValues.lng;
+                lngInput.style.width = '100%';
+                lngInput.style.marginBottom = '10px';
+                lngInput.addEventListener('input', function() {
+                    displacementValues.lng = parseFloat(this.value) || 0;
+                    applyDisplacement();
+                });
+                controlPanel.appendChild(lngInput);
+                
+                // Create buttons
+                const buttonsContainer = document.createElement('div');
+                buttonsContainer.style.display = 'flex';
+                buttonsContainer.style.gap = '5px';
+                
+                const applyButton = document.createElement('button');
+                applyButton.textContent = 'Apply';
+                applyButton.className = 'control-button';
+                applyButton.style.flex = '1';
+                applyButton.addEventListener('click', function() {
+                    applyDisplacement(true); // true = finalize
+                    deactivateDisplacement();
+                });
+                buttonsContainer.appendChild(applyButton);
+                
+                const cancelButton = document.createElement('button');
+                cancelButton.textContent = 'Cancel';
+                cancelButton.className = 'control-button';
+                cancelButton.style.flex = '1';
+                cancelButton.addEventListener('click', function() {
+                    revertDisplacement();
+                    deactivateDisplacement();
+                });
+                buttonsContainer.appendChild(cancelButton);
+                
+                controlPanel.appendChild(buttonsContainer);
+                
+                // Add to map
+                document.querySelector('.map-container').appendChild(controlPanel);
+            }
+        }
+        
+        // Function to apply displacement
+        function applyDisplacement(finalize = false) {
+            if (!activeFeature || !originalLatLngs) return;
+            
+            const layer = activeFeature.layer;
+            
+            if (layer instanceof L.Marker) {
+                // For markers
+                if (originalLatLngs.length > 0) {
+                    const orig = originalLatLngs[0];
+                    const newLatLng = L.latLng(
+                        orig.lat + displacementValues.lat,
+                        orig.lng + displacementValues.lng
+                    );
+                    layer.setLatLng(newLatLng);
+                }
+            } else if (layer instanceof L.Polyline) {
+                // For lines or polygons
+                if (originalLatLngs.length > 0) {
+                    if (originalLatLngs[0] instanceof L.LatLng) {
+                        // Simple line or polygon
+                        const newLatLngs = originalLatLngs.map(ll => 
+                            L.latLng(ll.lat + displacementValues.lat, ll.lng + displacementValues.lng)
+                        );
+                        layer.setLatLngs(newLatLngs);
+                    } else if (Array.isArray(originalLatLngs[0])) {
+                        // Polygon with holes
+                        const newLatLngs = originalLatLngs.map(ring => 
+                            ring.map(ll => L.latLng(ll.lat + displacementValues.lat, ll.lng + displacementValues.lng))
+                        );
+                        layer.setLatLngs(newLatLngs);
+                    }
+                }
+            }
+            
+            if (finalize) {
+                // Update the original coordinates for future reference
+                storeOriginalCoordinates(layer);
+                showStatus(`Feature displaced by ${displacementValues.lat.toFixed(6)}° lat, ${displacementValues.lng.toFixed(6)}° lng`);
+            }
+        }
+        
+        // Function to revert displacement
+        function revertDisplacement() {
+            if (!activeFeature || !originalLatLngs) return;
+            
+            const layer = activeFeature.layer;
+            
+            if (layer instanceof L.Marker) {
+                // For markers
+                if (originalLatLngs.length > 0) {
+                    layer.setLatLng(originalLatLngs[0]);
+                }
+            } else if (layer instanceof L.Polyline) {
+                // For lines or polygons
+                if (originalLatLngs.length > 0) {
+                    layer.setLatLngs(originalLatLngs);
+                }
+            }
+            
+            // Reset values
+            displacementValues = { lat: 0, lng: 0 };
+        }
+        
+        // Function to deactivate displacement mode
+        function deactivateDisplacement() {
+            isDisplacementActive = false;
+            
+            // Remove displacement controls
+            const controlPanel = document.getElementById('displacement-controls');
+            if (controlPanel) {
+                controlPanel.remove();
+            }
+            
+            // Reset feature style if it exists
+            if (activeFeature && activeFeature.layer && activeFeature.layer.setStyle) {
+                // Reset to default style
+                activeFeature.layer.setStyle({
+                    color: '#3388ff',
+                    weight: 3,
+                    dashArray: null
+                });
+            }
+        }
+        
         // Add drag and drop support for KML files
         const mapContainer = document.querySelector('.map-container');
         
@@ -745,6 +1044,11 @@
         document.getElementById('load-kml').addEventListener('click', () => {
             const fileInput = document.getElementById('kml-file');
             if (fileInput.files.length > 0) {
+                // If displacement is active, deactivate it first
+                if (isDisplacementActive) {
+                    deactivateDisplacement();
+                }
+                
                 showStatus('Loading KML file...');
                 parseKML(fileInput.files[0]);
             } else {
@@ -753,6 +1057,11 @@
         });
         
         document.getElementById('clear-map').addEventListener('click', () => {
+            // If displacement is active, deactivate it first
+            if (isDisplacementActive) {
+                deactivateDisplacement();
+            }
+            
             if (kmlLayer) {
                 if (map.hasLayer(kmlLayer)) {
                     map.removeLayer(kmlLayer);
@@ -764,9 +1073,66 @@
                     type: 'document',
                     children: []
                 };
+                currentFileName = '';
+                activeFeature = null;
                 document.getElementById('kml-features').innerHTML = '';
                 document.getElementById('kml-layers').innerHTML = '';
                 showStatus('Map cleared!');
+            }
+        });
+        
+        // Keyboard shortcuts
+        document.addEventListener('keydown', function(e) {
+            // Escape key to cancel displacement
+            if (e.key === 'Escape' && isDisplacementActive) {
+                revertDisplacement();
+                deactivateDisplacement();
+                showStatus('Displacement canceled');
+            }
+            
+            // Arrow keys for displacement when in displacement mode
+            if (isDisplacementActive && e.target.tagName !== 'INPUT') {
+                const step = e.shiftKey ? 0.0001 : 0.00001; // Larger step with shift key
+                
+                switch (e.key) {
+                    case 'ArrowUp':
+                        displacementValues.lat += step;
+                        applyDisplacement();
+                        e.preventDefault();
+                        break;
+                    case 'ArrowDown':
+                        displacementValues.lat -= step;
+                        applyDisplacement();
+                        e.preventDefault();
+                        break;
+                    case 'ArrowRight':
+                        displacementValues.lng += step;
+                        applyDisplacement();
+                        e.preventDefault();
+                        break;
+                    case 'ArrowLeft':
+                        displacementValues.lng -= step;
+                        applyDisplacement();
+                        e.preventDefault();
+                        break;
+                    case 'Enter':
+                        // Apply displacement
+                        applyDisplacement(true);
+                        deactivateDisplacement();
+                        showStatus('Displacement applied');
+                        e.preventDefault();
+                        break;
+                }
+                
+                // Update the input fields if they exist
+                const controlPanel = document.getElementById('displacement-controls');
+                if (controlPanel) {
+                    const inputs = controlPanel.querySelectorAll('input');
+                    if (inputs.length >= 2) {
+                        inputs[0].value = displacementValues.lat;
+                        inputs[1].value = displacementValues.lng;
+                    }
+                }
             }
         });
         
@@ -778,6 +1144,214 @@
                 parseKML(e.target.files[0]);
             }
         });
+        
+        // Export KML functionality
+        document.getElementById('export-kml').addEventListener('click', () => {
+            if (kmlLayer) {
+                exportKML();
+            } else {
+                showStatus('No KML data to export', true);
+            }
+        });
+        
+        // Function to convert GeoJSON back to KML
+        function exportKML() {
+            try {
+                if (!kmlLayer) {
+                    showStatus('No KML data to export', true);
+                    return;
+                }
+                
+                // Create a KML document
+                const kmlContent = createKMLFromFeatures();
+                
+                // Create a Blob with the KML content
+                const blob = new Blob([kmlContent], {type: 'application/vnd.google-earth.kml+xml'});
+                
+                // Create a download link
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = currentFileName ? currentFileName : 'exported_map.kml';
+                document.body.appendChild(a);
+                a.click();
+                
+                // Clean up
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                }, 100);
+                
+                showStatus('KML exported successfully!');
+            } catch (error) {
+                console.error('Error exporting KML:', error);
+                showStatus('Error exporting KML: ' + error.message, true);
+            }
+        }
+        
+        // Function to create KML content from features
+        function createKMLFromFeatures() {
+            // Start KML document
+            let kml = '<?xml version="1.0" encoding="UTF-8"?>\n';
+            kml += '<kml xmlns="http://www.opengis.net/kml/2.2">\n';
+            kml += '  <Document>\n';
+            kml += `    <name>${kmlStructure.name || 'Exported KML'}</name>\n`;
+            kml += '    <description>Exported from KML Map Viewer</description>\n';
+            
+            // Add a style for polygons
+            kml += '    <Style id="polygonStyle">\n';
+            kml += '      <LineStyle>\n';
+            kml += '        <width>3</width>\n';
+            kml += '        <color>ff0000ff</color>\n';
+            kml += '      </LineStyle>\n';
+            kml += '      <PolyStyle>\n';
+            kml += '        <color>7f0000ff</color>\n';
+            kml += '      </PolyStyle>\n';
+            kml += '    </Style>\n';
+            
+            // Add a style for lines
+            kml += '    <Style id="lineStyle">\n';
+            kml += '      <LineStyle>\n';
+            kml += '        <width>3</width>\n';
+            kml += '        <color>ff0000ff</color>\n';
+            kml += '      </LineStyle>\n';
+            kml += '    </Style>\n';
+            
+            // Iterate through all layers and extract features
+            if (kmlLayer && kmlLayer._layers) {
+                Object.values(kmlLayer._layers).forEach(layer => {
+                    if (layer.feature || layer._popup) {
+                        // Extract feature properties
+                        let name = 'Unnamed Feature';
+                        let description = '';
+                        
+                        if (layer.feature && layer.feature.properties) {
+                            name = layer.feature.properties.name || layer.feature.properties.title || name;
+                            description = layer.feature.properties.description || '';
+                        }
+                        
+                        // Create Placemark
+                        kml += '    <Placemark>\n';
+                        kml += `      <name>${escapeXml(name)}</name>\n`;
+                        
+                        if (description) {
+                            kml += `      <description>${escapeXml(description)}</description>\n`;
+                        }
+                        
+                        // Add geometry based on feature type
+                        if (layer instanceof L.Marker) {
+                            // Point
+                            const latlng = layer.getLatLng();
+                            kml += '      <Point>\n';
+                            kml += `        <coordinates>${latlng.lng.toFixed(7)},${latlng.lat.toFixed(7)},0</coordinates>\n`;
+                            kml += '      </Point>\n';
+                        } else if (layer instanceof L.Polygon) {
+                            // Polygon
+                            kml += '      <styleUrl>#polygonStyle</styleUrl>\n';
+                            kml += '      <Polygon>\n';
+                            kml += '        <outerBoundaryIs>\n';
+                            kml += '          <LinearRing>\n';
+                            kml += '            <coordinates>\n';
+                            
+                            // Get coordinates
+                            const latlngs = layer.getLatLngs();
+                            if (Array.isArray(latlngs) && latlngs.length > 0) {
+                                if (Array.isArray(latlngs[0]) && latlngs[0].length > 0) {
+                                    // Complex polygon - just get outer ring
+                                    const outerRing = latlngs[0];
+                                    outerRing.forEach(latlng => {
+                                        kml += `              ${latlng.lng.toFixed(7)},${latlng.lat.toFixed(7)},0\n`;
+                                    });
+                                    
+                                    // Close the ring if needed
+                                    const first = outerRing[0];
+                                    const last = outerRing[outerRing.length - 1];
+                                    if (first.lat !== last.lat || first.lng !== last.lng) {
+                                        kml += `              ${first.lng.toFixed(7)},${first.lat.toFixed(7)},0\n`;
+                                    }
+                                } else {
+                                    // Simple polygon
+                                    latlngs.forEach(latlng => {
+                                        kml += `              ${latlng.lng.toFixed(7)},${latlng.lat.toFixed(7)},0\n`;
+                                    });
+                                    
+                                    // Close the ring if needed
+                                    const first = latlngs[0];
+                                    const last = latlngs[latlngs.length - 1];
+                                    if (first.lat !== last.lat || first.lng !== last.lng) {
+                                        kml += `              ${first.lng.toFixed(7)},${first.lat.toFixed(7)},0\n`;
+                                    }
+                                }
+                            }
+                            
+                            kml += '            </coordinates>\n';
+                            kml += '          </LinearRing>\n';
+                            kml += '        </outerBoundaryIs>\n';
+                            
+                            // Add inner boundaries (holes) if any
+                            if (Array.isArray(latlngs) && latlngs.length > 1 && Array.isArray(latlngs[0])) {
+                                for (let i = 1; i < latlngs.length; i++) {
+                                    const innerRing = latlngs[i];
+                                    kml += '        <innerBoundaryIs>\n';
+                                    kml += '          <LinearRing>\n';
+                                    kml += '            <coordinates>\n';
+                                    
+                                    innerRing.forEach(latlng => {
+                                        kml += `              ${latlng.lng.toFixed(7)},${latlng.lat.toFixed(7)},0\n`;
+                                    });
+                                    
+                                    // Close the ring if needed
+                                    const first = innerRing[0];
+                                    const last = innerRing[innerRing.length - 1];
+                                    if (first.lat !== last.lat || first.lng !== last.lng) {
+                                        kml += `              ${first.lng.toFixed(7)},${first.lat.toFixed(7)},0\n`;
+                                    }
+                                    
+                                    kml += '            </coordinates>\n';
+                                    kml += '          </LinearRing>\n';
+                                    kml += '        </innerBoundaryIs>\n';
+                                }
+                            }
+                            
+                            kml += '      </Polygon>\n';
+                        } else if (layer instanceof L.Polyline) {
+                            // LineString
+                            kml += '      <styleUrl>#lineStyle</styleUrl>\n';
+                            kml += '      <LineString>\n';
+                            kml += '        <coordinates>\n';
+                            
+                            // Get coordinates
+                            const latlngs = layer.getLatLngs();
+                            latlngs.forEach(latlng => {
+                                kml += `          ${latlng.lng.toFixed(7)},${latlng.lat.toFixed(7)},0\n`;
+                            });
+                            
+                            kml += '        </coordinates>\n';
+                            kml += '      </LineString>\n';
+                        }
+                        
+                        kml += '    </Placemark>\n';
+                    }
+                });
+            }
+            
+            // Close the KML document
+            kml += '  </Document>\n';
+            kml += '</kml>';
+            
+            return kml;
+        }
+        
+        // Helper function to escape XML special characters
+        function escapeXml(unsafe) {
+            if (!unsafe) return '';
+            return unsafe
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&apos;');
+        }
     </script>
 </body>
 </html>
